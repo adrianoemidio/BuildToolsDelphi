@@ -7,29 +7,48 @@ function Write-Int32 {
     $writer.Write([System.BitConverter]::GetBytes([int32]$value))
 }
 
-# Function to compile a .po file into a .mo file
-function Compile-POToMO {
+# Function to compile a .po file into a .mo file, preserving header properties
+function Compile-POToMOWithProperties {
     param (
         [string]$poFilePath,
         [string]$moFilePath
     )
-    
+
+    # Read the .po file content
     $poContent = Get-Content -Path $poFilePath -Raw
     $entries = @()
     $entry = @{}
+    $isHeader = $true
+    $headerProperties = @{}
+
+    # Parse the header and entries
     foreach ($line in $poContent -split "`n") {
         $line = $line.Trim()
-        if ($line -match '^msgid "(.*)"$') {
-            $entry['msgid'] = $matches[1]
-        } elseif ($line -match '^msgstr "(.*)"$') {
-            $entry['msgstr'] = $matches[1]
-        } elseif ($line -eq "") {
-            if ($entry.ContainsKey('msgid') -and $entry.ContainsKey('msgstr')) {
-                $entries += $entry
+
+        # Parse the header properties (e.g., Content-Type, Content-Transfer-Encoding)
+        if ($isHeader -and $line -match "^\s*$") {
+            $isHeader = $false
+        }
+
+        if ($isHeader -and $line -match "^(.+):\s*(.+)$") {
+            $headerProperties[$matches[1]] = $matches[2]
+        }
+
+        if (-not $isHeader) {
+            if ($line -match '^msgid "(.*)"$') {
+                $entry['msgid'] = $matches[1]
+            } elseif ($line -match '^msgstr "(.*)"$') {
+                $entry['msgstr'] = $matches[1]
+            } elseif ($line -eq "") {
+                if ($entry.ContainsKey('msgid') -and $entry.ContainsKey('msgstr')) {
+                    $entries += $entry
+                }
+                $entry = @{}
             }
-            $entry = @{}
         }
     }
+
+    # Make sure the last entry is added
     if ($entry.ContainsKey('msgid') -and $entry.ContainsKey('msgstr')) {
         $entries += $entry
     }
@@ -37,7 +56,16 @@ function Compile-POToMO {
     # Create a MemoryStream to build the .mo file content
     $memoryStream = New-Object System.IO.MemoryStream
     $writer = New-Object System.IO.BinaryWriter($memoryStream)
-    
+
+    # Write the custom header properties (as a string) before the .mo content
+    $headerString = "Properties:\n"
+    foreach ($key in $headerProperties.Keys) {
+        $headerString += "$key: $($headerProperties[$key])`n"
+    }
+    $headerBytes = [System.Text.Encoding]::UTF8.GetBytes($headerString)
+    Write-Int32 $writer $headerBytes.Length # Write the length of the header
+    $writer.Write($headerBytes) # Write the actual header content
+
     # Write the .mo file header
     Write-Int32 $writer 0x950412de # Magic number
     Write-Int32 $writer 0 # Version (0)
@@ -50,11 +78,12 @@ function Compile-POToMO {
     $originalStrings = @()
     $translatedStrings = @()
     $offset = (28 + $entries.Count * 16)
-    
+
+    # Add the original and translated strings to the lists
     foreach ($entry in $entries) {
         $originalStrings += $entry['msgid']
         $translatedStrings += $entry['msgstr']
-        
+
         Write-Int32 $writer ([System.Text.Encoding]::UTF8.GetByteCount($entry['msgid'])) # Length of original string
         Write-Int32 $writer $offset # Offset of original string
         $offset += ([System.Text.Encoding]::UTF8.GetByteCount($entry['msgid']) + 1) # +1 for null terminator
@@ -66,6 +95,7 @@ function Compile-POToMO {
         $offset += ([System.Text.Encoding]::UTF8.GetByteCount($entry['msgstr']) + 1) # +1 for null terminator
     }
 
+    # Write the null-terminated original and translated strings
     foreach ($originalString in $originalStrings) {
         $writer.Write([System.Text.Encoding]::UTF8.GetBytes($originalString + "`0")) # Null-terminated string
     }
@@ -83,23 +113,8 @@ function Compile-POToMO {
     $memoryStream.Close()
 }
 
-# Directory paths
-$poDirectory = "C:\path\to\po\files"
-$moDirectory = "C:\path\to\mo\files"
-
-# Ensure the output directory exists
-if (-not (Test-Path -Path $moDirectory)) {
-    New-Item -ItemType Directory -Path $moDirectory
-}
-
-# Get all .po files in the directory
-$poFiles = Get-ChildItem -Path $poDirectory -Filter "*.po"
-
-# Compile each .po file to .mo
-foreach ($poFile in $poFiles) {
-    $moFileName = [System.IO.Path]::ChangeExtension($poFile.Name, ".mo")
-    $moFilePath = Join-Path -Path $moDirectory -ChildPath $moFileName
-    Compile-POToMO -poFilePath $poFile.FullName -moFilePath $moFilePath
-}
-
-Write-Host "Compilation complete. .mo files are saved in $moDirectory"
+# Example usage
+$poFilePath = "C:\path\to\your.po"
+$moFilePath = "C:\path\to\your.mo"
+Compile-POToMOWithProperties -poFilePath $poFilePath -moFilePath $moFilePath
+Write-Host "Compilation complete."
