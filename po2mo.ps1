@@ -19,7 +19,7 @@ function Compile-POToMOWithProperties {
     $entries = @()
     $entry = @{}
     $isHeader = $true
-    $headerProperties = @{}
+    $headerProperties = ""
 
     # Parse the header and entries
     foreach ($line in $poContent -split "`n") {
@@ -31,7 +31,7 @@ function Compile-POToMOWithProperties {
         }
 
         if ($isHeader -and $line -match "^(.+):\s*(.+)$") {
-            $headerProperties[$matches[1]] = $matches[2]
+            $headerProperties += "$($matches[1]): $($matches[2])`r`n"
         }
 
         if (-not $isHeader) {
@@ -57,12 +57,8 @@ function Compile-POToMOWithProperties {
     $memoryStream = New-Object System.IO.MemoryStream
     $writer = New-Object System.IO.BinaryWriter($memoryStream)
 
-    # Write the custom header properties (as a string) before the .mo content
-    $headerString = "Properties:\n"
-    foreach ($key in $headerProperties.Keys) {
-        $headerString += "$key: $($headerProperties[$key])`n"
-    }
-    $headerBytes = [System.Text.Encoding]::UTF8.GetBytes($headerString)
+    # Write the header properties as a comment block
+    $headerBytes = [System.Text.Encoding]::UTF8.GetBytes($headerProperties)
     Write-Int32 $writer $headerBytes.Length # Write the length of the header
     $writer.Write($headerBytes) # Write the actual header content
 
